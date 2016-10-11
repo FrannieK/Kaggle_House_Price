@@ -1,0 +1,264 @@
+---
+title: "Ames, Iowa House Price Prediction"
+author: "FrannieK"
+date: "25 September 2016"
+output: pdf_document
+---
+
+###Key Word
+Random forest, House price, Prediction
+
+
+###Abstract
+Random forest can achieve high classification performance through a classifcation ensemble with a set of decision trees that grow using randomly selected subspaces of data.  This prediction methodology is applied to predict the house prices in Ames based on many features of house. 
+
+###Introduction
+The _Ames Housing dataset_ consists of 79 explanatory variables which describe various aspects of a house. 
+
+Random forest (RF) model randomly generates subsets of data and subsets of features (or attributes) to create a classification or regression tree. The ultimate prediction os cateogory or value that has the highest probability from the output aggregation of K trees.
+ 
+No special treatment to input data is required although Random forest does not work on missing values.Nevertheless, I've judgementally decided to apply some adjustment to those variables that exhibit highly correlated missing values. As evidenced later, this addtional calibration resulted in  better prediction accuracy. 
+
+###Prediction 
+
+```{r library, echo=FALSE, warning=FALSE}
+library(MASS)
+library(lattice)
+library(randomForest)
+library(xlsx)
+```
+
+Two sets of data are loaded for training and prediction. As aforementioned, RF produces an error when a missing value is introduced. Missing values will need to be assigned either with a value or recognised as a proper object. 
+
+Alternatively, a new level must be explicitly added to the factor variables prior to assigning new of interpretation of missing values. (e.g. levels(x) = ...) 
+
+
+```{r data load, results='hide'}
+dir = "C:/Users/Huran/Desktop/Data_Project/HousePrice_Competition_16"
+setwd(dir)
+
+train = read.csv("Data/train.csv",header=TRUE, sep = ",", na.strings = c("NA", " ", ""))
+test = read.csv ("Data/test.csv", header=TRUE, sep=",", na.strings = c("NA", " ", ""))
+
+data = list(train = train, test = test)
+
+lapply(data, function(x) any(is.na(x)))
+
+sapply(train, function(x) sum(is.na(x)))
+```
+
+As aforesaid, RF does not handle missing values well as there is no value to be split on.
+
+Predictor variables with relatively high number of missing values as are follows: 
+
+LotFrontage: Linear feet of street connected to property
+Alley:Type of alley access
+BsmtExposure; BsmtFinType1; BsmtFinType2 : Features of Basement
+FireplaceQu: Fireplace quality (conditional on the existence of fireplace)
+GarageType; GarageYrBlt; GarageFinish; GarageQual;GarageCond: Features of Garage
+PoolQC:pool quality
+Fence: fence quality
+MiscFeature:Miscellaneous feature not covered in other categories
+
+Notably, Basement and Garage features associated with a single feature of a house and will only be valid for those houses with such facilities.  
+
+A solution is to aggregate and create a dummy variable for the presence of facility itself.
+This assumes specific details of such facility will have immaterial impact on the ultimate house price.
+
+_Treat missing values first before building RF model_
+The rule is:
+for all Basement related variables - if any one of values is NA - treat as 'no basement'
+for all Garage related variables - if any one of values is NA - treat as 'no garage'
+
+
+```{r NA treatment, results='hide'}
+
+for(i in seq(data)){
+
+  for(j in 1:nrow(data[[i]])){
+    bsmt = data[[i]][,grepl("Bsmt", names(data[[i]]))]
+
+    if (any(is.na(bsmt[j,]))) {
+      data[[i]]$BSMT[[j]] = 0
+    }
+    else {
+      data[[i]]$BSMT[[j]] = 1
+      }
+  }
+}
+
+for(i in seq(data)){
+
+  for(j in 1:nrow(data[[i]])){
+    grg = data[[i]][,grepl("Garage", names(data[[i]]))]
+
+    if (any(is.na(grg[j,]))) {
+      data[[i]]$GRG[[j]] = 0
+    }
+    else {
+      data[[i]]$GRG[[j]] = 1
+      }
+  }
+}
+
+for(i in seq(data)){
+
+data[[i]] = data[[i]][,!names(data[[i]]) %in% names(bsmt)]
+data[[i]] = data[[i]][,!names(data[[i]]) %in% names(grg)]
+}
+
+sapply(data, function(x) sum(is.na(x)))
+
+for(i in 1:2){
+ print(sapply(data[[i]],function(x) sum(is.na(x))))
+
+}
+```
+
+The rest of missing values are treated via na.roughfix() function call. Alternatively, rfImpute() function call can be used which gives a better result in general [^1]. However, rfImpute() function needs known target variables ,therefore not applicable to unsupervised cases and to this particular work too. 
+
+
+1. For numerical variables, NAs are replaced with column medians.
+2. For factor variables, NAs are replaced with the most frequent levels (breaking ties at random).
+[^1]
+
+```{r}
+train = data[[1]]
+test = data[[2]]
+
+train = na.roughfix(train)
+test = na.roughfix(test)
+
+```
+
+```{r ManualNATreat, eval=FALSE, echo=FALSE}
+#Manual Alternative
+#variables = names(subset(train, select=-SalePrice))
+#print(variables)
+#  
+#
+#for(i in variables){
+#  if(is.character(train[,i]))
+#  {
+#    
+#    train[[i]][is.na(train[[i]])] = "None" 
+#    train[[i]] = as.factor(train[[i]])
+#  }
+# else {
+#  train[[i]][is.na(train[[i]])] = median(train[[i]], na.rm=TRUE)
+# }
+#}
+#
+#
+#for(i in variables){
+#  if(is.character(test[,i]))
+#  {
+#    
+#    test[[i]][is.na(test[[i]])] = "None" 
+#    test[[i]] = as.factor(test[[i]])
+#  }
+# else {
+#  test[[i]][is.na(test[[i]])] = mean(test[[i]], na.rm=TRUE)
+# }
+#}
+#
+
+
+```
+
+```{r, eval=FALSE, echo=FALSE}
+########## DO NOT RUN ################
+
+data = lapply(data, function(x) subset(x, select=-c(LotFrontage, Alley, FireplaceQu, Fence, PoolQC, MiscFeature, MasVnrType, MasVnrArea, Electrical)))
+
+data_s = subset(data[[2]],select = c(MSZoning, Utilities,Exterior2nd, Functional, SaleType, Exterior1st, KitchenQual))
+
+data[[2]] = subset(data[[2]], select=-c(MSZoning, Utilities,Exterior2nd, Functional, SaleType, Exterior1st, KitchenQual))
+
+lapply(data_s, table)
+
+c["MSZoning"][is.na(c["MSZoning"])]="RL"
+c[which(is.na(c$Utilities)),]$Utilities="AllPub"
+c["Exterior2nd"][is.na(c["Exterior2nd"])]="VinylSd"
+c[which(is.na(c$Functional)),]$Functional="Typ"
+c[which(is.na(c$SaleType)),]$SaleType="WD"
+c[which(is.na(c$Exterior1st)),]$Exterior1st="MetalSd"
+c[which(is.na(c$KitchenQual)),]$KitchenQual="TA"
+
+sapply(data, function(x) sum(is.na(x)))
+
+sapply(data_s, function(x) sum(is.na(x)))
+
+any(is.na(train))
+
+data[[2]] = cbind(data[[2]], data_s)
+
+
+
+```
+
+
+```{r train test, eval=FALSE, echo=FALSE}
+
+#split data into training vs. test set
+set.seed(2)
+
+s = sample(nrow(train), nrow(train)*0.7)
+train1 = data[s,]
+train2 =data[-s,]
+```
+
+###RF Algorithm
+
+The dependent variable, house sale price, is continous therefore we are creating a RF for regression. This is done via randomForest() function call. No out-of-sample split is needed as validation is done internally during the RF run.  
+
+```{r random forest regression model, results='hide'}
+#rfm = randomForest(SalePrice~., data = train1, ntree=1000) 
+#partitioned data into train vs. test set for cross-validation and calculation of accuracy (MSE)
+rfm = randomForest(SalePrice~., data = train, ntree=1000, do.trace=TRUE)
+#pred = predict(rfm, train2)
+#print(pred)
+
+#calculates SMSE or MSE
+# predict saleprice of the real prediction set
+
+
+```
+
+###Result
+
+Prediction is made on the test by applying the RF model.
+
+```{r output, results='markup', comment=NA}
+
+for (i in names(test)){
+  levels(train[, i]) = unique(c(levels(train[,i]), levels(test[,i])))
+  levels(test[,i]) = levels(train[,i])
+}
+
+
+identical(colnames(subset(train, select=-SalePrice)), colnames(test))
+
+sale = predict(rfm, test)
+print(sale)
+
+sub = data.frame(Id = test$Id, SalePrice = sale)
+
+write.csv(sub, file = "FrannieK_sub.csv", row.names = FALSE)
+
+```
+
+```{r test, eval=FALSE, echo=FALSE}
+y=NULL
+for(i in 1:10){
+  
+  if(i>5){
+     y[i] = 0}
+     else {y[i]=1}
+ 
+}
+  
+```
+
+
+[^1]: "http://www.listendata.com/2014/11/random-forest-with-r.html"
